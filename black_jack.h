@@ -1,5 +1,4 @@
-#pragma once
-
+#include <iostream>
 #include <vector>
 #include <random>
 #include <ctime>
@@ -21,6 +20,25 @@ struct Card {
             return 11;
         }
         return static_cast<int>(rank) + 2;
+    }
+
+    std::string getRank() const{
+        switch(rank){
+            case Rank::TWO: return "TWO";
+            case Rank::THREE: return "THREE";
+            case Rank::FOUR: return "FOUR";
+            case Rank::FIVE: return "FIVE";
+            case Rank::SIX: return "SIX";
+            case Rank::SEVEN: return "SEVEN";
+            case Rank::EIGHT: return "EIGHT";
+            case Rank::NINE: return "NINE";
+            case Rank::TEN: return "TEN";
+            case Rank::JACK: return "JACK";
+            case Rank::QUEEN: return "QUEEN";
+            case Rank::KING: return "KING";
+            case Rank::ACE: return "ACE";
+        }
+        return "NO CASE";
     }
 };
 
@@ -50,25 +68,50 @@ public:
     }
 };
 
-class BlackjackGame {
+class Player {
 public:
-    enum class Action { Hit, Stand, Undefined };
+    int playerID;
+    enum class Action { Start, Hit, Stand, Undefined, Quit};
+    Action playerAction;
+    std::vector<Card> cards;
+    int bankroll;
 
-private:
-    Deck deck;
-    std::vector<Card> playerHand, dealerHand;
+public:
+    Player(int numPlayer) : playerID(numPlayer) {}
 
-    void dealInitialCards() {
-        playerHand.push_back(deck.dealCard());
-        dealerHand.push_back(deck.dealCard());
-        playerHand.push_back(deck.dealCard());
-        dealerHand.push_back(deck.dealCard());
+    int getPlayerID() {
+        return playerID;
     }
 
-    int getHandValue(const std::vector<Card>& hand) {
+    void setPlayerAction(Action action) {
+        playerAction = action;
+    }
+
+    Action deserializeAction(const std::string& actionStr) {
+        if (actionStr == "hit") return Action::Hit;
+        if (actionStr == "stand") return Action::Stand;
+        if (actionStr == "quit") return Action::Quit;
+        if(actionStr == "start") return Action::Start;
+        return Action::Undefined;
+    }
+
+    void playerHit(Card card) {
+        cards.push_back(card);
+    }
+
+    std::string getPlayerCards(){
+        std::string gameState = "Player Cards: \n";
+        for (const auto& card : cards) {
+
+            gameState += "Card: "+card.getRank() + "\n";
+        }
+        return gameState;
+    }
+
+    int getHandValue() {
         int value = 0;
         int aces = 0;
-        for (const auto& card : hand) {
+        for (const auto& card : cards) {
             value += card.getValue();
             if (card.rank == Rank::ACE) {
                 ++aces;
@@ -83,43 +126,8 @@ private:
         return value;
     }
 
-public:
-    BlackjackGame() {
-        deck.reset();
-        dealInitialCards();
-    }
-
-    std::string serializeGameState() {
-        std::string gameState;
-        for (const auto& card : playerHand) {
-            gameState += std::to_string(static_cast<int>(card.rank)) + "," + std::to_string(static_cast<int>(card.suit)) + ";";
-        }
-        gameState += "|";
-        for (const auto& card : dealerHand) {
-            gameState += std::to_string(static_cast<int>(card.rank)) + "," + std::to_string(static_cast<int>(card.suit)) + ";";
-        }
-        return gameState;
-    }
-
-    Action deserializeAction(const std::string& actionStr) {
-        if (actionStr == "hit") return Action::Hit;
-        if (actionStr == "stand") return Action::Stand;
-        return Action::Undefined;
-    }
-
-    void playerHit() {
-        playerHand.push_back(deck.dealCard());
-    }
-
-    void playerStand() {
-        while (getHandValue(dealerHand) < 17) {
-            dealerHand.push_back(deck.dealCard());
-        }
-    }
-
-    std::string determineOutcome() {
-        int playerValue = getHandValue(playerHand);
-        int dealerValue = getHandValue(dealerHand);
+    std::string determineOutcome(int dealerValue) {
+        int playerValue = getHandValue();
 
         if (playerValue > 21) {
             return "Player busts; Dealer wins.";
@@ -133,8 +141,85 @@ public:
             return "It's a tie.";
         }
     }
+};
+
+class BlackjackGame {
+public:
+    std::vector<Player> players;
+    std::vector<Card> dealerHand;
+
+private:
+    Deck deck;
+
+
+public:
+    BlackjackGame() {
+        deck.reset();
+    }
+
+void dealerPlay(){
+    int dealerValue = getHandValue(); 
+    while (dealerValue < 17){
+        dealerHand.push_back(deck.dealCard());
+        dealerValue = getHandValue(); 
+    }
+}
+
+    void dealInitialCards() {
+        std::cout << "Dealing Dealer Cards." << std::endl; 
+        dealerHand.push_back(deck.dealCard());
+        dealerHand.push_back(deck.dealCard());
+    }
+
+
+void clearAll() {
+    dealerHand.clear();
+}
+
+    void setPlayers(std::vector<Player>& playerSet){
+    players = playerSet;
+    }
+
+
+    Card getCard(){
+        return deck.dealCard();
+    }
+
+    std::string getDealerShowing(){
+    return "Dealer Showing: "+dealerHand[0].getRank();
+    }
+
+    std::string serializeGameState() {
+        std::string gameState = "Dealer Has: \n";
+        for (const auto& card : dealerHand) {
+            gameState += "Card: " + card.getRank()+ "\n";
+        }
+        return gameState;
+    }
 
     bool isGameActive() {
-        return getHandValue(playerHand) < 21;
+        return getHandValue() < 21;
     }
+
+int getHandValue() {
+    if (dealerHand.empty()) {
+        return 0; // Or whatever you want to return for an empty hand
+    }
+
+    int value = 0;
+    int aces = 0;
+    for (const auto& card : dealerHand) {
+        value += card.getValue();
+        if (card.rank == Rank::ACE) {
+            ++aces;
+        }
+    }
+
+    while (value > 21 && aces > 0) {
+        value -= 10;
+        --aces;
+    }
+
+    return value;
+}
 };
