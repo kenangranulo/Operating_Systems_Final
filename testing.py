@@ -1,46 +1,88 @@
 import socket
-import sys
-
-def get_user_action():
-    while True:
-        action = input("Action to you - start/hit/stand/quit: ").strip().lower()
-        commands = ['hit', 'stand', 'quit', 'start']
-        if action in commands:
-            return action
-        else:
-            print("Invalid action. 'Please choose start', 'hit', 'stand', or 'quit'")
-
-def main(server_host, server_port):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+import json
+import threading
+import time
+isRunning = True
+# Function to receive game state from the server
+def receive_game_state():
+    global isRunning  # Declare isRunning as global
+    while isRunning:
         try:
-            s.connect((server_host, server_port))
-            print("Connected to server.")
-        except ConnectionError as e:
-            print(f"Unable to connect to the server: {e}")
-            sys.exit(1)
-
-        while True:
-            game_state = s.recv(1024).decode('utf-8')
-            if not game_state:
-                print("Disconnected from server.")
+            data = client_socket.recv(4096).decode()
+            if not data:
                 break
-            elif "wins" in game_state or "tie" in game_state:
-                print(game_state)  # Display the outcome
-            elif '|' in game_state:
-                print_game_state(game_state)
+            if "server_termination" in data:
+                print("Server has terminated!")
+                isRunning = False
+                break
+            print(data)
+            print("Enter action (HIT/STAND)")
+                            
+        except Exception as e:
+            print("Failed to receive game state:", e)
+            break
+
+
+# Function to send user action to the server
+def send_action():
+    while isRunning:
+        try:
+
+            bet_message = {
+                "type": "BET",
+                "betAmount": bet_amount
+            }
+            client_socket.sendall(json.dumps(bet_message).encode())
+            # Get user input for action (HIT/STAND)
+            user_action = input("Enter action (HIT/STAND): ").upper()
+
+            # Send the action to the server
+            action_message = {
+                "type": "TURN",
+                "action": user_action
+            }
+            client_socket.sendall(json.dumps(action_message).encode())
+        except Exception as e:
+            print("Failed to send action:", e)
+            break
+
+# Function to get bet amount from the user
+def get_bet_amount(balance):
+    while True:
+        try:
+            bet_amount = int(input(f"Enter your bet amount (available balance: {balance}): "))
+            if bet_amount > balance:
+                print("Insufficient balance. Please enter a valid bet amount.")
             else:
-                print(game_state)  # Print non-game messages directly
-            action = get_user_action()
-            if action == "quit":
-                break
-            
-            s.sendall(action.encode('utf-8'))
+                return bet_amount
+        except ValueError:
+            print("Invalid input. Please enter a valid number.")
 
-if __name__ == "__main__":
-    HOST = '127.0.0.1'
-    PORT = 3000
+# Set up the connection to the server
+server_ip = '127.0.0.1'
+server_port = 1500
 
-    if len(sys.argv) > 2:
-        HOST, PORT = sys.argv[1], int(sys.argv[2])
+try:
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client_socket.connect((server_ip, server_port))
+    print("Connected to the server.")
 
-    main(HOST, PORT)
+    # Prompt the user for their initial bet amount
+    user_balance = 200
+    bet_amount = get_bet_amount(user_balance)
+
+    # Create and start threads for receiving game state and taking user input
+    receive_thread = threading.Thread(target=receive_game_state)
+    send_thread = threading.Thread(target=send_action)
+    receive_thread.start()
+    send_thread.start()
+
+    # Wait for the threads to finish (this will never happen as the threads run indefinitely)
+    receive_thread.join()
+    send_thread.join()
+
+except KeyboardInterrupt:
+    print("Closing the connection.")
+    client_socket.close()
+except Exception as e:
+    print("An error occurred:", e)
