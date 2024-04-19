@@ -2,27 +2,62 @@ import socket
 import json
 import threading
 import time
+from flask import Flask, render_template_string, request, jsonify
+
+app = Flask(__name__)
 
 isRunning = True
+game_state = {}
 
 # Function to receive game state from the server
 def receive_game_state():
-    global isRunning  # Declare isRunning as global
+    global isRunning, game_state
     while isRunning:
         try:
             data = client_socket.recv(4096).decode()
             if not data:
                 break
-            if "server_termination" in data:
-                print("Server has terminated!")
-                isRunning = False
-                client_socket.close()
-                break
-            print(data)
-            print("Enter action (HIT/STAND/DONE)")
+            game_state = json.loads(data)
+            print(game_state)
+            time.sleep(1)
         except Exception as e:
             print("Failed to receive game state:", e)
             break
+
+@app.route('/')
+def index():
+    return render_template_string('''
+        <html>
+        <head>
+            <title>Blackjack Game</title>
+            <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+            <script>
+                $(document).ready(function(){
+                    function updateGameState(){
+                        $.getJSON("/game_state", function(data){
+                            $("#game_state").text(JSON.stringify(data));
+                        });
+                    }
+                    setInterval(updateGameState, 1000);
+                });
+            </script>
+        </head>
+        <body>
+            <h1>Blackjack Game</h1>
+            <p>Game State: <span id="game_state"></span></p>
+            <form action="/action" method="post">
+                <label for="user_action">Enter action (HIT/STAND/DONE):</label>
+                <input type="text" id="user_action" name="user_action">
+                <input type="submit" value="Submit">
+            </form>
+        </body>
+        </html>
+    ''')
+
+@app.route('/game_state')
+def get_game_state():
+    global game_state
+    return jsonify(game_state)
 
 # Function to send user action to the server
 def send_action():
@@ -61,7 +96,20 @@ def get_bet_amount(balance):
         except ValueError:
             print("Invalid input. Please enter a valid number.")
 
-# Set up the connection to the server
+@app.route('/action', methods=['POST'])
+def handle_action():
+    user_action = request.form['user_action'].upper()
+    if user_action == "DONE":
+        client_socket.sendall(json.dumps({"type": "DONE"}).encode())
+        print("Exiting the game.")
+        return "Exiting the game."
+    action_message = {
+        "type": "TURN",
+        "action": user_action
+    }
+    client_socket.sendall(json.dumps(action_message).encode())
+    return "Action sent: {}".format(user_action)
+
 server_ip = '127.0.0.1'
 server_port = 1500
 
@@ -70,19 +118,12 @@ try:
     client_socket.connect((server_ip, server_port))
     print("Connected to the server.")
 
-    # Prompt the user for their initial bet amount
-    user_balance = 200
-    bet_amount = get_bet_amount(user_balance)
-
-    # Create and start threads for receiving game state and taking user input
     receive_thread = threading.Thread(target=receive_game_state)
     send_thread = threading.Thread(target=send_action)
     receive_thread.start()
-    send_thread.start()
 
-    # Wait for the threads to finish (this will never happen as the threads run indefinitely)
-    receive_thread.join()
-    send_thread.join()
+    # Run Flask app in the main thread
+    app.run(debug=True)
 
 except KeyboardInterrupt:
     print("Closing the connection.")
