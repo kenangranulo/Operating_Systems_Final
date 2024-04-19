@@ -2,7 +2,9 @@ import socket
 import json
 import threading
 import time
+
 isRunning = True
+
 # Function to receive game state from the server
 def receive_game_state():
     global isRunning  # Declare isRunning as global
@@ -14,29 +16,30 @@ def receive_game_state():
             if "server_termination" in data:
                 print("Server has terminated!")
                 isRunning = False
+                client_socket.close()
                 break
             print(data)
-            print("Enter action (HIT/STAND)")
-                            
+            print("Enter action (HIT/STAND/DONE)")
         except Exception as e:
             print("Failed to receive game state:", e)
             break
 
-
 # Function to send user action to the server
 def send_action():
+    global isRunning
     while isRunning:
         try:
-
             bet_message = {
                 "type": "BET",
                 "betAmount": bet_amount
             }
             client_socket.sendall(json.dumps(bet_message).encode())
-            # Get user input for action (HIT/STAND)
-            user_action = input("Enter action (HIT/STAND): ").upper()
-
-            # Send the action to the server
+            user_action = input("Enter action (HIT/STAND/DONE): ").upper()
+            if user_action == "DONE":
+                client_socket.sendall(json.dumps({"type": "DONE"}).encode())
+                print("Exiting the game.")
+                #isRunning = False
+                break
             action_message = {
                 "type": "TURN",
                 "action": user_action
@@ -84,5 +87,5 @@ try:
 except KeyboardInterrupt:
     print("Closing the connection.")
     client_socket.close()
-except Exception as e:
-    print("An error occurred:", e)
+finally:
+    client_socket.close()

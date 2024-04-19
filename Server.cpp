@@ -291,6 +291,8 @@ class DealerThread : public Thread{
 	private:
 		int TIME_BETWEEN_REFRESHES;
 		int idx;
+		static int timeToTerminate;
+		static bool isTimerActive;
 
 	public:
 		DealerThread(int gameIdx):Thread(1000),TIME_BETWEEN_REFRESHES(1),idx(gameIdx) {
@@ -307,6 +309,9 @@ class DealerThread : public Thread{
 		}
 
 		virtual long ThreadMain(void) override{
+			while(playerSockets.size()<2){
+                sleep(1); // Wait for a second before checking again
+            }
 			Semaphore broadcast("broadcast");
 			Semaphore mutex("mutex");
 			while(true)
@@ -322,6 +327,24 @@ class DealerThread : public Thread{
 
 				// Execut game state change if time ran out
 				bool shouldUpdateSeat = (games[idx]->currentState == 1 && games[idx]->currentSeatPlaying < games[idx]->getNumberOfActivePlayers() && games[idx]->players[games[idx]->currentSeatPlaying]->isDoneTurn);
+
+				if(games[idx]->getNumberOfActivePlayers() < 2){
+					if(!isTimerActive){
+						std::cout << "Number of active players is less than 2. Starting 30 second timer..." << std::endl;
+						timeToTerminate = 30;
+						isTimerActive = true;
+					} else {
+						timeToTerminate -= TIME_BETWEEN_REFRESHES;
+						std::cout << "Time to terminate: " << timeToTerminate << " seconds" <<std::endl;
+						if(timeToTerminate <= 0) {
+							 std::cout << "No player joined in time. Terminating server." << std::endl;
+                        	delete server;
+                        	exit(0);
+						}
+					}
+				} else {
+					isTimerActive = false;
+				}
 
 				if (games[idx]->timeRemaining <= 0 || shouldUpdateSeat) {	
 					// If game state is currently in play
@@ -416,8 +439,12 @@ class DealerThread : public Thread{
 					
 				}
 			}
+	
 		}
 };
+
+int DealerThread::timeToTerminate = 30;
+bool DealerThread::isTimerActive = false;
 
 
 // PlayerReader thread is responsible for broadcasting the gamestate to the client of each player
@@ -436,6 +463,9 @@ class PlayerReader : public Thread
 		}
 		
 		virtual long ThreadMain(void) override{
+			while(playerSockets.size()<2){
+                sleep(1); // Wait for a second before checking again
+            }
 			
 			std::cout << "A player reader thread has started." << std::endl;
 			
@@ -477,7 +507,9 @@ class PlayerWriter : public Thread
 		}
 		
 		virtual long ThreadMain(void) override{
-			
+			while(playerSockets.size()<2){
+                sleep(1); // Wait for a second before checking again
+            }			
 			std::cout << "A player writer thread has started on Game #" << std::to_string(games[idx]->gameID) << std::endl;
 			
 			Semaphore mutex("mutex");
@@ -487,47 +519,67 @@ class PlayerWriter : public Thread
 			while (true)
 			{
 				ByteArray * buffer = new ByteArray();
-				if (socket.Read(*buffer) == 0)
-				{
-	
-					std::cout << "Player-" << std::to_string(data.id) << " left Game #" << std::to_string(games[idx]->gameID) << std::endl;
-					data.isActive = 2;
-
-					break;
-					
-				}
-				mutex.Wait();
-				// // Modify the gameState has needed
-
-				std::string req = (*buffer).ToString();
-				Json::Value playerAction(Json::objectValue);
-				Json::Reader reader;
-				reader.parse(req, playerAction);
-
-				// This if block executes when the client indicates that they are hitting or standing
-				if (playerAction["type"].asString() == "TURN")
-				{
-					std::string action = playerAction["action"].asString();
-						std::cout << action << std::endl;
-						if (action == "HIT") {
-							// If player hits, append new card to player
-							data.cards.push_back(getRandomCard());
-							
-							// If sum of player's cards is over 21, go ot next player
-							data.isDoneTurn = doneTurn(data.cards, 21);
-						} else {
-							// If player stands, go to next player
-							data.isDoneTurn = true;
-						}
-					} else {
-						// If player indicates that they are betting, adjust bet amount
-						int betAmn = playerAction["betAmount"].asInt();
-						data.balance -= betAmn; 
-						data.bet = betAmn;
+				try {
+					if (socket.Read(*buffer) == 0){
+						throw std::string("Socket closed by client");
 					}
 
-				mutex.Signal();
+					mutex.Wait();
+
+					std::string req = (*buffer).ToString();
+					Json::Value playerAction(Json::objectValue);
+					Json::Reader reader;
+					reader.parse(req, playerAction);
+
+					if (playerAction["type"].asString() == "DONE")
+					{
+						std::cout << "Player-" << std::to_string(data.id) << " left Game #" << std::to_string(games[idx]->gameID) << std::endl;
+						data.isActive = 2; // Set player status to inactive
+						games[idx]->removePlayer(data.id); // Remove player from the game
+						updateGameState(); // Update game state to reflect the changes
+						//socket.Close(); // Close the socket
+						mutex.Signal();
+						break; // Exit the loop
+					}
+
+					// This if block executes when the client indicates that they are hitting or standing
+					if (playerAction["type"].asString() == "TURN")
+					{
+						std::string action = playerAction["action"].asString();
+							std::cout << action << std::endl;
+							if (action == "HIT") {
+								// If player hits, append new card to player
+								data.cards.push_back(getRandomCard());
+								
+								// If sum of player's cards is over 21, go ot next player
+								data.isDoneTurn = doneTurn(data.cards, 21);
+							} else {
+								// If player stands, go to next player
+								data.isDoneTurn = true;
+							}
+						} else {
+							// If player indicates that they are betting, adjust bet amount
+							int betAmn = playerAction["betAmount"].asInt();
+							data.balance -= betAmn; 
+							data.bet = betAmn;
+						}
+
+					mutex.Signal();
+				}
+				catch (std::string err){
+					std::cout << err << std::endl;
+					break;
+				}
 			}
+		}
+
+		void updateGameState(){
+			games[idx]->gameState["dealerCards"] = from(games[idx]->dealerCards);
+    		games[idx]->gameState["hasDealerBusted"] = isBusted(games[idx]->dealerCards);
+			games[idx]->gameState["timeRemaining"] = games[idx]->timeRemaining;
+			games[idx]->gameState["dealerSum"] = formatCardSum(cardSum(games[idx]->dealerCards));
+			games[idx]->gameState["players"] = from(games[idx]->players);
+			games[idx]->gameState["numberOfActivePlayers"] = games[idx]->getNumberOfActivePlayers(); // Update the number of active players
 		}
 	};
 
