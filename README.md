@@ -1,1 +1,7 @@
-"# se3313-2017-Lab4" 
+Operating Systems Final Project.
+
+Kenan Granulo
+Nikola Kovacevic
+Cooper Perron
+Maddy Gander
+Liam Yoell
